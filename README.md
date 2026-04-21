@@ -21,10 +21,10 @@ Carnice-27b uses Qwen3.5's `qwen3_5_text` architecture, which **breaks** in stan
 │  Your App    │────▶│  Modal Serverless Endpoint                    │
 │              │     │  (A100-80GB, $2.50/hr)                        │
 │  OpenAI SDK  │◀────│                                               │
-│  or curl     │     │  llama.cpp server (ai-dock b8851 build)       │
-└──────────────┘     │  Q4_K_M GGUF (16.5GB weights)                │
-                     │  ~60GB VRAM available for KV cache             │
-                     │  128K context (256K trained, 252K tested ✅)   │
+│  llama.cpp server (ai-dock b8851 build)       │
+│  Q4_K_M GGUF (16.5GB weights)                │
+│  ~60GB VRAM available for KV cache             │
+│  256K context (262144 trained, 252K tested ✅)  │
                      │  Flash attention, q8_0 KV cache               │
                      │  Checkpoint caching (82x faster on cache hit) │
                      │  7-minute scaledown window                    │
@@ -192,13 +192,13 @@ The context window is split evenly across parallel slots. Configure based on you
 
 | Config | Context | Slots | Slot Size | Best For |
 |--------|---------|-------|-----------|----------|
-| `--ctx-size 131072 --parallel 2` | 128K | 2 | 64K | **Default** — 2 concurrent requests, good balance |
+| `--ctx-size 262144 --parallel 1` | 256K | 1 | 256K | **Default** — max capacity, tested up to 252K tokens |
+| `--ctx-size 131072 --parallel 2` | 128K | 2 | 64K | 2 concurrent requests, good balance |
 | `--ctx-size 131072 --parallel 1` | 128K | 1 | 128K | Single long-context request (agent loops) |
-| `--ctx-size 262144 --parallel 1` | 256K | 1 | 256K | Max capacity — tested up to 252K tokens |
 
-Edit in `carnice_llama_modal.py`:
+Configured in `carnice_llama_modal.py`:
 ```python
-CONTEXT_LENGTH = 131072  # Increase to 262144 for max capacity
+CONTEXT_LENGTH = 262144  # 256K = full model training length, single slot
 ```
 
 ### Quantization Options
@@ -218,7 +218,7 @@ GGUF_FILE = "Carnice-27b-Q4_K_M.gguf"  # Change this
 ### Key Parameters
 
 ```python
-CONTEXT_LENGTH = 131072   # Max context window (model trained on 262144)
+CONTEXT_LENGTH = 262144   # Full model context window (256K trained, 252K tested)
 GPU_TYPE = "A100-80GB"    # GPU selection
 SCALEDOWN_WINDOW = 420    # 7 min idle before scale-down
 ```
@@ -282,13 +282,18 @@ Look for `n_ctx_slot` (not just `n_ctx`) — `n_ctx_slot = n_ctx / parallel`.
 
 ## Files
 
-- `carnice_llama_modal.py` — **Main deployment** (working, production)
-- `carnice_vllm_modal.py` — Abandoned vLLM attempt (source build timeout)
-- `carnice_sglang_modal.py` — Abandoned SGLang attempt (architecture registry hack)
-- `patch_sglang.py` — SGLang qwen3_5 registry patch (didn't work)
-- `sitecustomize.py` — Transformers model_type override injection (didn't work)
+### Production
+
+- `carnice_llama_modal.py` — **Main deployment** (working, 256K context)
 - `monitor.sh` — Quick endpoint health check script
-- `diag.py` — Container diagnostics helper
+
+### Attempts (non-working)
+
+- `attempts/carnice_vllm_modal.py` — vLLM + TurboQuant attempt (source build timeout — 607 CUDA targets, Modal build runner dies after ~200)
+- `attempts/carnice_sglang_modal.py` — SGLang attempt (`qwen3_5_text` not in transformers registry, multiple patches failed)
+- `attempts/patch_sglang.py` — SGLang EntryClass registry patch (added `Qwen3_5ForCausalLM` — didn't resolve config loading)
+- `attempts/sitecustomize.py` — Transformers `CONFIG_MAPPING_NAMES` override (didn't propagate to AutoConfig's lazy registry)
+- `attempts/diag.py` — Container diagnostics helper (used during SGLang debugging)
 
 ## License
 
