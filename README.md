@@ -132,7 +132,28 @@ Carnice-27b's chat template (**peg-native** format) handles tool-calling nativel
 - [Modal](https://modal.com) account with API token configured (`modal token set`)
 - Python 3.12+
 
-### Deploy
+### 1. Create the Modal Secret
+
+All deploy scripts use a **universal secret pattern**. Create the secret once, use it everywhere:
+
+```bash
+# Generate a new API key (or use your own)
+export NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+
+# Create the Modal Secret
+modal secret create carnice-api-key CARNICE_API_KEY="$NEW_KEY"
+
+# Save it locally for testing
+echo "CARNICE_API_KEY=$NEW_KEY" >> .env
+```
+
+**To use a different secret name**, edit the top of any deploy script:
+```python
+SECRET_NAME = "my-custom-secret"  # Change this
+SECRET_KEY = "CARNICE_API_KEY"    # The env var name inside the secret
+```
+
+### 2. Deploy
 
 ```bash
 git clone https://github.com/gwyntel/Carnice-27b-Modal.git

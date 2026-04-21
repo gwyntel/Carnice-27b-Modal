@@ -18,6 +18,7 @@
 #   modal deploy carnice_llama_modal.py   # deploy persistent endpoint
 #   modal run carnice_llama_modal.py       # test locally
 
+import os
 import subprocess
 import time
 
@@ -33,11 +34,30 @@ GGUF_FILE = "Carnice-27b-Q4_K_M.gguf"  # 16.5GB, fits A100-80GB with massive KV 
 
 SERVED_MODEL_NAME = "kai-os/Carnice-27b"
 
-# ── Security ───────────────────────────────────────────────────────────────
+# ── Universal Secret Configuration ─────────────────────────────────────────
+#
+# Load API key from Modal Secret at runtime. Change SECRET_NAME to use
+# your own secret, or set CARNICE_API_KEY env var locally for testing.
+#
+# To create the secret:
+#   modal secret create carnice-api-key CARNICE_API_KEY=sk-...
+#
+# Then reference it below or override at the top of this file.
+SECRET_NAME = "carnice-api-key"  # Change this to use a different Modal Secret
+SECRET_KEY = "CARNICE_API_KEY"    # The env var name inside the secret
 
-# API key loaded from Modal Secret at runtime.
-# Create with: modal secret create carnice-api-key CARNICE_API_KEY=<your-key>
-CARNICE_API_KEY = os.environ.get("CARNICE_API_KEY", "CHANGE-ME") 1eb214b (security: rotate API key out of repo, use Modal Secret)
+# Load key from env (Modal injects secrets as env vars)
+def _get_api_key():
+    """Get API key from Modal Secret (runtime) or local env (testing)."""
+    key = os.environ.get(SECRET_KEY)
+    if not key or key == "CHANGE-ME":
+        raise RuntimeError(
+            f"No {SECRET_KEY} found. Create a Modal Secret:\n"
+            f"  modal secret create {SECRET_NAME} {SECRET_KEY}=sk-...\n"
+            f"Or set {SECRET_KEY} env var for local testing."
+        )
+    return key
+
 
 # ── Infrastructure ────────────────────────────────────────────────────────
 
@@ -104,7 +124,7 @@ app = modal.App("carnice-27b-llamacpp")
     scaledown_window=SCALEDOWN_WINDOW,
     timeout=10 * MINUTES,
     volumes={MODEL_DIR: model_vol},
-    secrets=[modal.Secret.from_name("carnice-api-key")],
+    secrets=[modal.Secret.from_name(SECRET_NAME)],
 )
 @modal.experimental.http_server(
     port=PORT,
@@ -117,8 +137,8 @@ class CarniceLlamaCpp:
     @modal.enter()
     def startup(self):
         """Download GGUF if needed, then start llama-server."""
-        import os
 
+        CARNICE_API_KEY = _get_api_key()
         gguf_path = f"{MODEL_DIR}/{GGUF_FILE}"
 
         # Download model if not cached
@@ -175,7 +195,7 @@ class CarniceLlamaCpp:
 
         self.process = subprocess.Popen(cmd)
         self._wait_ready(timeout=5 * MINUTES)
-        self._warmup()
+        self._warmup(CARNICE_API_KEY)
 
     @modal.exit()
     def stop(self):
@@ -205,7 +225,7 @@ class CarniceLlamaCpp:
             time.sleep(5)
         raise TimeoutError(f"llama-server not healthy within {timeout}s")
 
-    def _warmup(self):
+    def _warmup(self, api_key: str):
         """Send a simple request to warm up CUDA kernels."""
         import urllib.request
         import json
@@ -221,7 +241,7 @@ class CarniceLlamaCpp:
                 data=data,
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {CARNICE_API_KEY}",
+                    "Authorization": f"Bearer {api_key}",
                 },
             )
             resp = urllib.request.urlopen(req, timeout=120)
@@ -235,6 +255,10 @@ class CarniceLlamaCpp:
 
 # ── Test entrypoint ────────────────────────────────────────────────────────
 
+# Cache key locally for test entrypoint
+_TEST_API_KEY = os.environ.get(SECRET_KEY)
+
+
 @app.local_entrypoint()
 async def test():
     """Test the deployed endpoint — simple generation + tool-calling."""
@@ -242,11 +266,15 @@ async def test():
     import asyncio
     import json
 
+    if not _TEST_API_KEY:
+        print(f"⚠️  No {SECRET_KEY} set. Set it in your environment to run tests.")
+        return
+
     url = (await CarniceLlamaCpp._experimental_get_flash_urls.aio())[0]
     print(f"Server URL: {url}")
 
     headers = {
-        "Authorization": f"Bearer {CARNICE_API_KEY}",
+        "Authorization": f"Bearer {_TEST_API_KEY}",
         "Content-Type": "application/json",
     }
 

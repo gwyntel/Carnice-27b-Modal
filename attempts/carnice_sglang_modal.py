@@ -34,7 +34,18 @@ MODEL_NAME = "kai-os/Carnice-27b"
 
 # ── Security ───────────────────────────────────────────────────────────────
 
-CARNICE_API_KEY = "CHANGE-ME"  # placeholder — use Modal Secret in production
+# ── Universal Secret Configuration ─────────────────────────────────────────
+#
+# Change SECRET_NAME to use your own Modal Secret, or set CARNICE_API_KEY env var.
+SECRET_NAME = "carnice-api-key"
+SECRET_KEY = "CARNICE_API_KEY"
+
+import os
+def _get_api_key():
+    key = os.environ.get(SECRET_KEY)
+    if not key or key == "CHANGE-ME":
+        raise RuntimeError(f"Set {SECRET_KEY} env var or create Modal Secret: {SECRET_NAME}")
+    return key
 
 # ── Infrastructure ────────────────────────────────────────────────────────
 
