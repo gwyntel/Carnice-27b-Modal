@@ -35,7 +35,9 @@ SERVED_MODEL_NAME = "kai-os/Carnice-27b"
 
 # ── Security ───────────────────────────────────────────────────────────────
 
-CARNICE_API_KEY = "CHANGEMEOKAY"
+# API key loaded from Modal Secret at runtime.
+# Create with: modal secret create carnice-api-key CARNICE_API_KEY=<your-key>
+CARNICE_API_KEY = os.environ.get("CARNICE_API_KEY", "CHANGE-ME") 1eb214b (security: rotate API key out of repo, use Modal Secret)
 
 # ── Infrastructure ────────────────────────────────────────────────────────
 
@@ -102,6 +104,7 @@ app = modal.App("carnice-27b-llamacpp")
     scaledown_window=SCALEDOWN_WINDOW,
     timeout=10 * MINUTES,
     volumes={MODEL_DIR: model_vol},
+    secrets=[modal.Secret.from_name("carnice-api-key")],
 )
 @modal.experimental.http_server(
     port=PORT,

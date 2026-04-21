@@ -49,7 +49,7 @@ KV_CACHE_SKIP_LAYERS = "0,1"  # skip first 2 layers
 # Without this, the server rejects requests. Prevents unauthorized use.
 # Change this to your own token before deploying.
 
-CARNICE_API_KEY = "***REMOVED***"
+CARNICE_API_KEY = "CHANGE-ME"  # placeholder — use Modal Secret in production
 
 # ── Infrastructure ────────────────────────────────────────────────────────
 
