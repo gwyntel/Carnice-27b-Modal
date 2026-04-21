@@ -35,7 +35,7 @@ SERVED_MODEL_NAME = "kai-os/Carnice-27b"
 
 # ── Security ───────────────────────────────────────────────────────────────
 
-CARNICE_API_KEY = "***REMOVED***"
+CARNICE_API_KEY = "CHANGEMEOKAY"
 
 # ── Infrastructure ────────────────────────────────────────────────────────
 
