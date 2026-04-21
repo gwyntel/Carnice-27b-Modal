@@ -50,11 +50,9 @@ SCALEDOWN_WINDOW = 7 * MINUTES
 # Qwen3.5-27B has 28 layers, head_dim=128, 4 KV heads (GQA).
 # KV per token (q8_0) ≈ 2 * 28 * 4 * 128 * 1 byte = 28,672 bytes ≈ 28KB
 # 59GB / 28KB ≈ 2.2M tokens (parallel=1), ~550K (parallel=4)
-# Testing max: 131072 (128K) — well within capacity even with parallel=4
-# Model trained on 262144; 252K tested successfully on A100-80GB with q8_0 KV.
-# Using 131072 (128K) as default — full model-trained context available if needed,
-# but 128K balances prompt processing latency vs context capacity for most agent work.
-CONTEXT_LENGTH = 131072
+# Model trained on 262144 (256K). 252K tested successfully — no OOM.
+# MAXIMUM FAT CONTEXT: 262144 = full model training length, single slot.
+CONTEXT_LENGTH = 262144
 
 # ── Container image ───────────────────────────────────────────────────────
 #
@@ -149,9 +147,8 @@ class CarniceLlamaCpp:
             "--ctx-size", str(CONTEXT_LENGTH),
             # Offload all layers to GPU
             "--n-gpu-layers", "-1",
-            # Parallel sequences — 2 slots of 64K each (128K / 2)
-            # Use --parallel 1 for full 128K slot, or 2 for concurrent requests
-            "--parallel", "2",
+            # Parallel sequences — single slot gets the full 256K context
+            "--parallel", "1",
             # Flash attention for efficiency (auto = enabled when available)
             "--flash-attn", "auto",
             # KV cache type — q8_0 is a good balance (turbo3 blocked by GQA bug #78)
