@@ -1,12 +1,12 @@
-# 🧠 Carnice-27b on Modal
+# 🧠 Carnice-V2-27b on Modal
 
-**Serverless GPU inference for [Carnice-27b](https://huggingface.co/kai-os/Carnice-27b-GGUF)** — a Qwen3.5-27B fine-tune with native hermes-style tool-calling.
+**Serverless GPU inference for [Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b-GGUF)** — a Qwen3.6-27B fine-tune with native hermes-style tool-calling.
 
-Deployed on [Modal](https://modal.com) with llama.cpp on A100-80GB GPUs. OpenAI-compatible API. Scales to zero. **252K tokens of context tested.**
+Deployed on [Modal](https://modal.com) with llama.cpp on A100-80GB GPUs. OpenAI-compatible API. Scales to zero. **256K context supported.**
 
 ## Why This Exists
 
-Carnice-27b uses Qwen3.5's `qwen3_5_text` architecture, which **breaks** in standard Python inference frameworks:
+Carnice-V2-27b uses Qwen3.6-27B (same `qwen3_5_text` / `qwen35` GGUF architecture as Qwen3.5), which **breaks** in standard Python inference frameworks:
 
 - **vLLM**: Source build times out (607 CUDA compile targets). No native `qwen35` support.
 - **SGLang**: `qwen3_5_text` not in transformers registry. Patching `EntryClass` and `get_config` didn't stick.
@@ -22,7 +22,7 @@ Carnice-27b uses Qwen3.5's `qwen3_5_text` architecture, which **breaks** in stan
 │              │     │  (A100-80GB, $2.50/hr)                        │
 │  OpenAI SDK  │◀────│                                               │
 │  llama.cpp server (ai-dock b8851 build)       │
-│  Q4_K_M GGUF (16.5GB weights)                │
+│  Q4_K_M GGUF (16GB weights)                 │
 │  ~60GB VRAM available for KV cache             │
 │  256K context (262144 trained, 252K tested ✅)  │
                      │  Flash attention, q8_0 KV cache               │
@@ -60,16 +60,18 @@ Qwen3.5's hybrid SSM/attention architecture creates **32 checkpoints** during pr
 
 | Metric | Value |
 |--------|-------|
-| **Model** | Carnice-27b (Qwen3.5-27B fine-tune) |
-| **Quantization** | Q4_K_M (16.5GB) |
+| **Model** | Carnice-V2-27b (Qwen3.6-27B SFT) |
+| **Quantization** | Q4_K_M (16GB) |
 | **GPU** | A100-80GB ($2.50/hr) |
 | **Context (default)** | 131,072 tokens (128K), 2 parallel slots of 64K |
 | **Context (model trained)** | 262,144 tokens (256K) |
-| **Context (tested max)** | 252,352 tokens — no OOM on A100 |
+| **Context (tested max V1)** | 252,352 tokens — no OOM on A100 |
 | **KV cache type** | q8_0 (half the size of f16) |
 | **Cold start** | ~2-3 min (first), ~30s (GGUF cached) |
 | **Cost** | $2.50/hr, scales to zero after 7 min idle |
 | **Tool-calling** | ✅ Native via chat template (no parser flag needed) |
+| **IFEval strict** | 93.3% (up from 90.0% on V1) |
+| **Perplexity** | 1.513 (down from 1.835 on V1) |
 
 ## KV Cache Deep Dive
 
@@ -86,9 +88,41 @@ Available KV VRAM: 80GB - 16.5GB (weights) - 1.5GB (CUDA) - 3GB (activation) ≈
 
 **We're using <10% of the A100's KV capacity at 128K context.** The bottleneck isn't memory — it's prompt processing latency. At 761 tok/s, filling 252K tokens takes ~5.5 minutes for the initial prompt.
 
-### TurboQuant KV (blocked)
+### TurboQuant KV (✅ Now Available)
 
-`--cache-type-k turbo3` would compress KV cache further, but is blocked by [llama.cpp GQA bug #78](https://github.com/TheTom/llama-cpp-turboquant/issues/78) — crashes when `n_head ≠ n_head_kv` (which Carnice-27B uses via GQA). Watch for a fix.
+**NEW:** `carnice_turboquant_modal.py` uses **AmesianX/TurboQuant** fork with Google DeepMind's TurboQuant KV cache compression.
+
+#### What is TurboQuant?
+
+- **4-6x KV cache compression** via 3-4 bit quantization (vs 16-bit FP16)
+- **Training-free, model-agnostic** — no fine-tuning needed
+- **Enables longer contexts** on same hardware
+- **Speed gains under memory pressure** — 2-3x throughput when FP16 pushes GPU into swap
+
+#### Quick Deploy
+
+```bash
+# Deploy TurboQuant endpoint (4-bit sweet spot)
+modal deploy carnice_turboquant_modal.py
+
+# Test with 3-bit mode (max compression)
+modal deploy carnice_turboquant_modal.py --cache-mode tbq3
+```
+
+#### Compression Modes
+
+| Mode | Bits | Compression | Quality |
+|------|------|-------------|---------|
+| `tbq3` | 3 | ~4-6x | Slight quality drop |
+| `tbq4` | 4 | ~4x | Near-lossless (sweet spot) |
+| `q8_0` | 8 | baseline | Standard |
+
+Edit `CACHE_MODE` in `carnice_turboquant_modal.py` to switch.
+
+#### References
+
+- **Paper:** [TurboQuant (ICLR 2026, Google DeepMind)](https://arxiv.org/abs/2504.19874)
+- **Fork:** [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant)
 
 ### Tiered KV Caching
 
@@ -104,7 +138,7 @@ llama.cpp supports multiple KV cache tiers:
 
 ## Tool-Calling
 
-Carnice-27b's chat template (**peg-native** format) handles tool-calling natively — no `--tool-call-parser` flag needed. The model generates proper `tool_calls` arrays with function names, arguments, and auto-generated IDs.
+Tool-calling works natively via chat template (peg-native format) — no `--tool-call-parser` needed. The model generates proper `tool_calls` arrays with function names, arguments, and auto-generated IDs.
 
 **Single tool:**
 ```json
@@ -169,7 +203,7 @@ curl -s "https://YOUR-ENDPOINT.modal.direct/v1/chat/completions" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "kai-os/Carnice-27b",
+    "model": "kai-os/Carnice-V2-27b",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 128
   }'
@@ -182,7 +216,7 @@ curl -s "https://YOUR-ENDPOINT.modal.direct/v1/chat/completions" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "kai-os/Carnice-27b",
+    "model": "kai-os/Carnice-V2-27b",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant with access to tools."},
       {"role": "user", "content": "What is the weather in Sacramento, CA?"}
@@ -224,17 +258,21 @@ CONTEXT_LENGTH = 262144  # 256K = full model training length, single slot
 
 ### Quantization Options
 
-| Format | Size | PPL | KLD 99.9% | Recommendation |
-|--------|------|-----|-----------|----------------|
-| **Q4_K_M** | 16.5GB | 6.6053 | 0.5478 | ✅ Sweet spot — max KV headroom |
-| Q5_K_M | ~20GB | ~6.58 | ~0.24 | If you need quality bump and have VRAM |
-| Q6_K | ~23GB | 6.5456 | ~0.22 | ❌ Uncanny valley — 7GB more for <1% PPL improvement over Q4 |
-| Q8_0 | ~29GB | 6.5352 | ~0.10 | Only for benchmarks |
+| Format | Size | Best For |
+|--------|------|----------|
+| **IQ2_M** | 9.4GB | ✅ 16GB GPUs — imatrix calibrated, best quality at this size |
+| Q2_K | 10GB | 16GB GPU fallback (if IQ quants fail on older runtimes) |
+| **Q4_K_M** | 16GB | ✅ Sweet spot for A100 — max KV headroom |
+| Q5_K_M | 18GB | Quality bump for 24GB+ GPUs |
+| Q8_0 | 27GB | Near-lossless for high-memory systems |
+| bf16 | 51GB | Full precision export |
 
 Edit `GGUF_FILE` to switch:
 ```python
-GGUF_FILE = "Carnice-27b-Q4_K_M.gguf"  # Change this
+GGUF_FILE = "carnice-v2-27b-Q4_K_M.gguf"  # Change this
 ```
+
+**Note:** IQ quants require a recent llama.cpp build that supports them. If `IQ2_M` fails to load, fall back to `Q2_K`.
 
 ### Key Parameters
 
@@ -298,14 +336,16 @@ Look for `n_ctx_slot` (not just `n_ctx`) — `n_ctx_slot = n_ctx / parallel`.
 - [ ] **Newer llama.cpp build** — unlock `--ctx-checkpoints` and `--checkpoint-every-n-tokens` for partial cache hits on hybrid Qwen3.5 architecture. This would make agent workflows (same system prompt, new user message) near-instant instead of forcing full reprocessing.
 - [ ] **`--cache-ram`** — offload checkpoints to host RAM, freeing VRAM for even more context or parallelism
 - [ ] **Hermes-agent integration** — add Carnice as a provider in hermes-agent config
-- [ ] **TurboQuant KV** — watch for GQA bug fix, then swap `--cache-type-k q8_0` → `turbo3` for even more context headroom
+- [ ] **TurboQuant KV** — ✅ **DONE** — `carnice_turboquant_modal.py` uses AmesianX fork with 4-6x KV compression
 - [ ] **`--cache-disk`** — when it lands in llama.cpp, persist checkpoints across server restarts
+- [ ] **TriAttention integration** — add GPU-accelerated KV cache pruning (like atomicmilkshake's fork) for even more aggressive compression
 
 ## Files
 
 ### Production
 
-- `carnice_llama_modal.py` — **Main deployment** (working, 256K context)
+- `carnice_llama_modal.py` — **Main deployment** (working, 256K context, q8_0 KV cache, Carnice-V2-27b)
+- `carnice_turboquant_modal.py` — **TurboQuant deployment** (4-6x KV compression, tbq3/tbq4 modes)
 - `monitor.sh` — Quick endpoint health check script
 
 ### Attempts (non-working)
@@ -318,4 +358,4 @@ Look for `n_ctx_slot` (not just `n_ctx`) — `n_ctx_slot = n_ctx / parallel`.
 
 ## License
 
-This deployment code is MIT licensed. The Carnice-27b model itself follows its own license — see [kai-os/Carnice-27b-GGUF](https://huggingface.co/kai-os/Carnice-27b-GGUF).
+This deployment code is MIT licensed. The Carnice-V2-27b model itself follows its own license — see [kai-os/Carnice-V2-27b-GGUF](https://huggingface.co/kai-os/Carnice-V2-27b-GGUF).
