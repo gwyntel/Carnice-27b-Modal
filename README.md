@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gwyntel/Carnice-27b-Modal)
+
 # 🧠 Carnice-V2-27b on Modal
 
 **Serverless GPU inference for [Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b-GGUF)** — a Qwen3.6-27B fine-tune with native hermes-style tool-calling.
